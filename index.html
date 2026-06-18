@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>何逸飞快跑</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #222;
+            overflow: hidden;
+            font-family: 'Microsoft YaHei', sans-serif;
+            touch-action: none; /* 禁止手机下拉刷新 */
+            user-select: none; /* 禁止选中文本 */
+        }
+
+        #gameCanvas {
+            display: block;
+            width: 100%;
+            height: 100vh;
+            background: linear-gradient(to bottom, #87CEEB 0%, #E0F7FA 100%);
+        }
+
+        /* UI 层容器 */
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none; /* 让点击穿透UI层，除非点到具体按钮 */
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+
+        /* 顶部信息栏 */
+        .top-bar {
+            padding: 20px;
+            display: flex;
+            justify-content: space-between;
+            font-size: 20px;
+            color: #333;
+            font-weight: bold;
+            text-shadow: 1px 1px 0px white;
+        }
+
+        .hp-bar span {
+            color: red;
+            font-size: 24px;
+        }
+
+        /* 中间开始/结束菜单 */
+        #menu-screen {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            background: rgba(255, 255, 255, 0.9);
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            pointer-events: auto; /* 允许点击 */
+            min-width: 200px;
+            z-index: 99;
+        }
+
+        h1 { margin: 0 0 10px 0; color: #333; font-size: 24px; }
+        p { color: #666; margin-bottom: 20px; font-size: 14px; }
+
+        button.main-btn {
+            background: #FF5722;
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            font-size: 18px;
+            border-radius: 25px;
+            cursor: pointer;
+            transition: transform 0.1s;
+            box-shadow: 0 4px 0 #bf360c;
+            pointer-events: auto;
+        }
+
+        button.main-btn:active {
+            transform: translateY(4px);
+            box-shadow: none;
+        }
+
+        /* 底部操作栏 */
+        .controls {
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            pointer-events: auto;
+            padding-bottom: 40px; /* 适配全面屏底部 */
+        }
+
+        .jump-btn {
+            width: 100%;
+            max-width: 400px;
+            height: 60px;
+            background: rgba(0, 0, 0, 0.2);
+            border: 2px solid rgba(255, 255, 255, 0.5);
+            border-radius: 10px;
+            color: white;
+            font-size: 20px;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            backdrop-filter: blur(5px);
+            cursor: pointer;
+            user-select: none;
+            pointer-events: auto;
+        }
+
+        .jump-btn:active {
+            background: rgba(0, 0, 0, 0.4);
+        }
+
+        /* 状态提示文字 */
+        #status-text {
+            position: absolute;
+            top: 40%;
+            width: 100%;
+            text-align: center;
+            font-size: 24px;
+            font-weight: bold;
+            color: #FF5722;
+            text-shadow: 1px 1px 0 white;
+            opacity: 0;
+            transition: opacity 0.5s;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 游戏画布 -->
+    <canvas id="gameCanvas"></canvas>
+
+    <!-- UI 界面 -->
+    <div id="ui-layer">
+        <div class="top-bar">
+            <div class="hp-bar">血量: <span id="hp-display">❤️❤️❤️</span></div>
+            <div class="score-bar">分数: <span id="score-display">0</span></div>
+        </div>
+
+        <div id="status-text"></div>
+
+        <div id="menu-screen">
+            <h1 id="menu-title">何逸飞快跑</h1>
+            <p id="menu-desc">点击下方按钮开始<br>跳跃躲避障碍，触碰空中道具获得技能</p>
+            <button class="main-btn" id="start-btn">开始游戏</button>
+        </div>
+
+        <div class="controls">
+            <div class="jump-btn" id="jump-btn">点击这里跳跃 (或按空格)</div>
+        </div>
+    </div>
+
+<script>
+    // --- 音频资源 ---
+    const bgmAudio = new Audio('1.mp3');
+    const hitAudio = new Audio('3.mp3');
+    // 背景音乐循环播放
+    bgmAudio.loop = true;
+    // 音量微调，避免声音过大
+    bgmAudio.volume = 0.6;
+    hitAudio.volume = 0.8;
+
+    // --- 游戏配置与变量 ---
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+
+    // UI 元素
+    const menuScreen = document.getElementById('menu-screen');
+    const startBtn = document.getElementById('start-btn');
+    const hpDisplay = document.getElementById('hp-display');
+    const scoreDisplay = document.getElementById('score-display');
+    const statusText = document.getElementById('status-text');
+    const jumpBtn = document.getElementById('jump-btn');
+    const menuTitle = document.getElementById('menu-title');
+
+    let animationId = null;
+    let isGameRunning = false;
+    let frameCount = 0;
+    let score = 0;
+
+    // ========== 调整跳跃高度，适中高度、保留横向跨度 ==========
+    let gameSpeed = 5;
+    const speedIncrement = 0.003;
+    const gravity = 0.48;    // 重力提高，下落更快，压低最高点
+    const jumpStrength = -17; // 降低起跳力度，跳跃高度大幅下降
+    const groundHeight = 100;
+
+    // 玩家尺寸完全保留，无任何修改
+    const player = {
+        x: 50,
+        y: 0,
+        width: 267,
+        height: 354,
+        dy: 0,
+        grounded: false,
+        hp: 3,
+        img: new Image(),
+        isInvincible: false,
+        invincibleTimer: 0
+    };
+    player.img.src = "heyifei.png";
+
+    const obstacleImg = new Image();
+    obstacleImg.src = "zhangai.png";
+
+    let obstacles = [];
+    let powerups = [];
+
+    // --- 初始化与重置 ---
+    function resize() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        player.y = canvas.height - groundHeight - player.height;
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    function updateUI() {
+        let hpStr = '';
+        for(let i=0; i<3; i++){
+            hpStr += i < player.hp ? '❤️' : '🖤';
+        }
+        hpDisplay.innerText = hpStr;
+        scoreDisplay.innerText = Math.floor(score / 10);
+    }
+
+    function showStatus(text) {
+        statusText.innerText = text;
+        statusText.style.opacity = 1;
+        setTimeout(()=>{
+            statusText.style.opacity = 0;
+        }, 1000);
+    }
+
+    function resetGame() {
+        if(animationId) cancelAnimationFrame(animationId);
+        player.y = canvas.height - groundHeight - player.height;
+        player.dy = 0;
+        player.hp = 3;
+        player.isInvincible = false;
+        player.invincibleTimer = 0;
+        gameSpeed = 5;
+        score = 0;
+        frameCount = 0;
+        obstacles = [];
+        powerups = [];
+        updateUI();
+        statusText.style.opacity = 0;
+        menuTitle.innerText = "何逸飞快跑";
+        startBtn.innerText = "开始游戏";
+    }
+
+    // --- 输入控制 ---
+    function jump() {
+        if (!isGameRunning) return;
+        if (player.grounded) {
+            player.dy = jumpStrength;
+            player.grounded = false;
+        }
+    }
+
+    startBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        resetGame();
+        isGameRunning = true;
+        menuScreen.style.display = 'none';
+        // 点击开始后播放背景音乐（解决浏览器自动播放限制）
+        bgmAudio.currentTime = 0;
+        bgmAudio.play().catch(err => console.log("背景音乐播放失败:", err));
+        animate();
+    });
+
+    jumpBtn.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        jump();
+    });
+    jumpBtn.addEventListener('mousedown', (e) => {
+        e.stopPropagation();
+        jump();
+    });
+    window.addEventListener('keydown', (e) => {
+        if (e.code === 'Space') {
+            e.preventDefault();
+            jump();
+        }
+    });
+
+    // --- 障碍物类 ---
+    class Obstacle {
+        constructor() {
+            this.w = 45 + Math.random() * 35;
+            this.h = 40 + Math.random() * 35;
+            this.x = canvas.width;
+            this.y = canvas.height - groundHeight - this.h;
+            this.markedForDeletion = false;
+        }
+        update() {
+            this.x -= gameSpeed;
+            if (this.x + this.w < 0) this.markedForDeletion = true;
+        }
+        draw() {
+            if (obstacleImg.complete && obstacleImg.naturalWidth > 0) {
+                ctx.drawImage(obstacleImg, this.x, this.y, this.w, this.h);
+            } else {
+                ctx.fillStyle = '#D32F2F';
+                ctx.fillRect(this.x, this.y, this.w, this.h);
+                ctx.strokeStyle = '#B71C1C';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(this.x, this.y, this.w, this.h);
+            }
+        }
+    }
+
+    // --- 道具类（降低道具最高高度，适配低跳跃）---
+    class PowerUp {
+        constructor() {
+            this.size = 40;
+            this.x = canvas.width;
+            const minH = canvas.height - groundHeight - 300;
+            const maxH = canvas.height - groundHeight - 100;
+            this.y = Math.random() * (maxH - minH) + minH;
+            this.type = Math.random() > 0.5 ? 'heal' : 'sprint';
+            this.markedForDeletion = false;
+        }
+        update() {
+            this.x -= gameSpeed;
+            if (this.x + this.size < 0) this.markedForDeletion = true;
+        }
+        draw() {
+            ctx.font = '30px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.beginPath();
+            ctx.arc(this.x + this.size/2, this.y + this.size/2, this.size/1.5, 0, Math.PI*2);
+            ctx.fillStyle = 'rgba(255, 255, 0, 0.3)';
+            ctx.fill();
+            if (this.type === 'heal') {
+                ctx.fillText('❤️', this.x + this.size/2, this.y + this.size/2);
+            } else {
+                ctx.fillText('⚡', this.x + this.size/2, this.y + this.size/2);
+            }
+        }
+    }
+
+    // 受伤扣血（新增碰撞音效）
+    function takeDamage() {
+        player.hp--;
+        updateUI();
+        showStatus("受到伤害！");
+        // 重置并播放碰撞音效
+        hitAudio.currentTime = 0;
+        hitAudio.play().catch(err => console.log("碰撞音效播放失败:", err));
+        if(player.hp <= 0){
+            gameOver();
+        }
+    }
+
+    // 游戏结束
+    function gameOver() {
+        isGameRunning = false;
+        cancelAnimationFrame(animationId);
+        menuScreen.style.display = 'block';
+        menuTitle.innerText = "游戏结束";
+        startBtn.innerText = "重新开始";
+        // 停止背景音乐
+        bgmAudio.pause();
+    }
+
+    // 道具技能激活
+    function activateSkill(type) {
+        if (type === 'heal') {
+            if (player.hp < 3) {
+                player.hp++;
+                updateUI();
+                showStatus("生命值 +1");
+            } else {
+                showStatus("生命已满");
+            }
+        } else if (type === 'sprint') {
+            player.isInvincible = true;
+            player.invincibleTimer = 180;
+            showStatus("无敌冲刺！");
+        }
+    }
+
+    // 绘制主角（尺寸不变）
+    function drawPlayer() {
+        if (player.isInvincible && Math.floor(Date.now() / 100) % 2 === 0) {
+            ctx.globalAlpha = 0.5;
+        } else {
+            ctx.globalAlpha = 1.0;
+        }
+        if (player.img.complete && player.img.naturalWidth > 0) {
+            ctx.drawImage(player.img, player.x, player.y, player.width, player.height);
+        } else {
+            ctx.fillStyle = '#1976D2';
+            ctx.fillRect(player.x, player.y, player.width, player.height);
+            ctx.fillStyle = '#fff';
+            ctx.fillRect(player.x + 30, player.y + 10, 10, 10);
+        }
+        ctx.globalAlpha = 1.0;
+    }
+
+    // --- 主循环 ---
+    function animate() {
+        if (!isGameRunning) return;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // 绘制地面
+        ctx.fillStyle = '#4CAF50';
+        ctx.fillRect(0, canvas.height - groundHeight, canvas.width, groundHeight);
+        ctx.fillStyle = '#388E3C';
+        ctx.fillRect(0, canvas.height - groundHeight, canvas.width, 10);
+
+        frameCount++;
+        let spawnRate = Math.floor(2600 / gameSpeed);
+        if (frameCount % spawnRate === 0) {
+            obstacles.push(new Obstacle());
+        }
+        if (frameCount % (spawnRate * 3) === 0 && Math.random() > 0.3) {
+            powerups.push(new PowerUp());
+        }
+
+        // 更新道具
+        for(let i = powerups.length - 1; i >= 0; i--){
+            const p = powerups[i];
+            p.update();
+            p.draw();
+            if (
+                player.x < p.x + p.size &&
+                player.x + player.width > p.x &&
+                player.y < p.y + p.size &&
+                player.y + player.height > p.y
+            ) {
+                activateSkill(p.type);
+                powerups.splice(i, 1);
+                continue;
+            }
+            if (p.markedForDeletion) powerups.splice(i, 1);
+        }
+
+        // 更新障碍物
+        for(let i = obstacles.length - 1; i >= 0; i--){
+            const obs = obstacles[i];
+            obs.update();
+            obs.draw();
+            if (
+                player.x < obs.x + obs.w &&
+                player.x + player.width > obs.x &&
+                player.y < obs.y + obs.h &&
+                player.y + player.height > obs.y
+            ) {
+                if (!player.isInvincible) {
+                    takeDamage();
+                }
+                obstacles.splice(i, 1);
+                continue;
+            }
+            if (obs.markedForDeletion) obstacles.splice(i, 1);
+        }
+
+        // 玩家物理
+        player.dy += gravity;
+        player.y += player.dy;
+        if (player.y + player.height >= canvas.height - groundHeight) {
+            player.y = canvas.height - groundHeight - player.height;
+            player.dy = 0;
+            player.grounded = true;
+        } else {
+            player.grounded = false;
+        }
+        drawPlayer();
+
+        // 加速加分
+        gameSpeed += speedIncrement;
+        score++;
+        scoreDisplay.innerText = Math.floor(score / 10);
+
+        // 无敌计时
+        if (player.isInvincible) {
+            player.invincibleTimer--;
+            if (player.invincibleTimer <= 0) {
+                player.isInvincible = false;
+                showStatus("冲刺结束");
+            }
+        }
+
+        animationId = requestAnimationFrame(animate);
+    }
+</script>
+</body>
+</html>
